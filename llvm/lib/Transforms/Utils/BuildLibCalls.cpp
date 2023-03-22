@@ -1540,6 +1540,30 @@ Value *llvm::emitMemCpyChk(Value *Dst, Value *Src, Value *Len, Value *ObjSize,
   return CI;
 }
 
+Value *llvm::emitMemMoveChk(Value *Dst, Value *Src, Value *Len, Value *ObjSize,
+                            IRBuilderBase &B, const DataLayout &DL,
+                            const TargetLibraryInfo *TLI) {
+  Module *M = B.GetInsertBlock()->getModule();
+  if (!isLibFuncEmittable(M, TLI, LibFunc_memmove_chk))
+    return nullptr;
+
+  AttributeList AS;
+  AS = AttributeList::get(M->getContext(), AttributeList::FunctionIndex,
+                          Attribute::NoUnwind);
+  Type *I8Ptr = B.getInt8PtrTy();
+  Type *SizeTTy = getSizeTTy(B, TLI);
+  FunctionCallee MemMove = getOrInsertLibFunc(M, *TLI, LibFunc_memmove_chk,
+      AttributeList::get(M->getContext(), AS), I8Ptr,
+      I8Ptr, I8Ptr, SizeTTy, SizeTTy);
+  Dst = castToCStr(Dst, B);
+  Src = castToCStr(Src, B);
+  CallInst *CI = B.CreateCall(MemMove, {Dst, Src, Len, ObjSize});
+  if (const Function *F =
+          dyn_cast<Function>(MemMove.getCallee()->stripPointerCasts()))
+    CI->setCallingConv(F->getCallingConv());
+  return CI;
+}
+
 Value *llvm::emitMemPCpy(Value *Dst, Value *Src, Value *Len, IRBuilderBase &B,
                          const DataLayout &DL, const TargetLibraryInfo *TLI) {
   Type *I8Ptr = B.getInt8PtrTy();

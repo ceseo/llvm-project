@@ -130,6 +130,12 @@ namespace llvm {
                        IRBuilderBase &B, const DataLayout &DL,
                        const TargetLibraryInfo *TLI);
 
+ /// Emit a call to the __memmove_chk function to the builder. This expects that
+  /// the Len and ObjSize have type 'size_t' and Dst/Src are pointers.
+  Value *emitMemMoveChk(Value *Dst, Value *Src, Value *Len, Value *ObjSize,
+                        IRBuilderBase &B, const DataLayout &DL,
+                        const TargetLibraryInfo *TLI);
+
   /// Emit a call to the mempcpy function.
   Value *emitMemPCpy(Value *Dst, Value *Src, Value *Len, IRBuilderBase &B,
                      const DataLayout &DL, const TargetLibraryInfo *TLI);

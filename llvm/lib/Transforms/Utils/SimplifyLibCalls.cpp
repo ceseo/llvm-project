@@ -3356,9 +3356,12 @@ Value *LibCallSimplifier::optimizePuts(CallInst *CI, IRBuilderBase &B) {
 
 Value *LibCallSimplifier::optimizeBCopy(CallInst *CI, IRBuilderBase &B) {
   // bcopy(src, dst, n) -> llvm.memmove(dst, src, n)
-  return copyFlags(*CI, B.CreateMemMove(CI->getArgOperand(1), Align(1),
-                                        CI->getArgOperand(0), Align(1),
-                                        CI->getArgOperand(2)));
+  // We need to take into account that when _D_FORTIFY_SOURCE is defined,
+  // bcopy should be replaced by __builtin___memmove_chk.
+  // This is done by the FortifySource pass.
+  return copyFlags(*CI, emitMemMoveChk(CI->getArgOperand(1), CI->getArgOperand(0),
+                                         CI->getArgOperand(2), CI->getArgOperand(2),
+                                         B, DL, TLI));
 }
 
 bool LibCallSimplifier::hasFloatVersion(const Module *M, StringRef FuncName) {
