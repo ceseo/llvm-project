@@ -501,11 +501,11 @@ R1136 else-if-stmt -> ELSE IF ( scalar-logical-expr ) THEN [if-construct-name]
 R1137 else-stmt -> ELSE [if-construct-name]
 R1138 end-if-stmt -> END IF [if-construct-name]
 R1139 if-stmt -> IF ( scalar-logical-expr ) action-stmt
-R1140 case-construct -> select-case-stmt [case-stmt block]... end-select-stmt
-R1141 select-case-stmt -> [case-construct-name :] SELECT CASE ( case-expr )
+R1140 case-construct -> [case-construct-name :] select-case-stmt [case-stmt block]... end-select-stmt
+R1141 select-case-stmt -> SELECT CASE ( case-expr )
 R1142 case-stmt -> CASE case-selector [case-construct-name]
 R1143 end-select-stmt -> END SELECT [case-construct-name]
-R1144 case-expr -> scalar-expr
+R1144 case-expr -> expr
 R1145 case-selector -> ( case-value-range-list ) | DEFAULT
 R1146 case-value-range ->
         case-value | case-value : | : case-value | case-value : case-value

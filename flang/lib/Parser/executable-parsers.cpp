@@ -323,18 +323,19 @@ TYPE_CONTEXT_PARSER("IF statement"_en_US,
         unlabeledStatement(actionStmt)))
 
 // R1140 case-construct ->
-//         select-case-stmt [case-stmt block]... end-select-stmt
+//         [case-construct-name :] select-case-stmt [case-stmt block]... end-select-stmt
 TYPE_CONTEXT_PARSER("SELECT CASE construct"_en_US,
-    construct<CaseConstruct>(statement(Parser<SelectCaseStmt>{}),
+    construct<CaseConstruct>(maybe(name / ":"),
+        statement(Parser<SelectCaseStmt>{}),
         many(construct<CaseConstruct::Case>(
             unambiguousStatement(Parser<CaseStmt>{}), block)),
         statement(endSelectStmt)))
 
-// R1141 select-case-stmt -> [case-construct-name :] SELECT CASE ( case-expr
-// ) R1144 case-expr -> scalar-expr
+// R1141 select-case-stmt -> SELECT CASE ( case-expr
+// ) R1144 case-expr -> expr
 TYPE_CONTEXT_PARSER("SELECT CASE statement"_en_US,
     construct<SelectCaseStmt>(
-        maybe(name / ":"), "SELECT CASE" >> parenthesized(scalar(expr))))
+        "SELECT CASE" >> parenthesized(indirect(expr))))
 
 // R1142 case-stmt -> CASE case-selector [case-construct-name]
 TYPE_CONTEXT_PARSER("CASE statement"_en_US,

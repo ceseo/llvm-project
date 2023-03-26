@@ -1057,8 +1057,8 @@ public:
   }
   void Unparse(const SelectCaseStmt &x) { // R1141, R1144
     Walk(std::get<std::optional<Name>>(x.t), ": ");
-    Word("SELECT CASE (");
-    Walk(std::get<Scalar<Expr>>(x.t)), Put(')'), Indent();
+    Word("SELECT CASE ("), Walk(std::get<Expr>(x.t));
+    Put(")"), Indent();
   }
   void Unparse(const CaseStmt &x) { // R1142
     Outdent(), Word("CASE "), Walk(std::get<CaseSelector>(x.t));

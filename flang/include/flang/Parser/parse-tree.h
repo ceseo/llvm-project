@@ -2305,11 +2305,11 @@ struct IfStmt {
   std::tuple<ScalarLogicalExpr, UnlabeledStatement<ActionStmt>> t;
 };
 
-// R1141 select-case-stmt -> [case-construct-name :] SELECT CASE ( case-expr )
-// R1144 case-expr -> scalar-expr
+// R1141 select-case-stmt -> SELECT CASE ( case-expr )
+// R1144 case-expr -> expr
 struct SelectCaseStmt {
   TUPLE_CLASS_BOILERPLATE(SelectCaseStmt);
-  std::tuple<std::optional<Name>, Scalar<Expr>> t;
+  Expr t;
 };
 
 // R1147 case-value -> scalar-constant-expr
@@ -2348,15 +2348,15 @@ struct CaseStmt {
 WRAPPER_CLASS(EndSelectStmt, std::optional<Name>);
 
 // R1140 case-construct ->
-//         select-case-stmt [case-stmt block]... end-select-stmt
+//         [case-construct-name :] select-case-stmt [case-stmt block]... end-select-stmt
 struct CaseConstruct {
   struct Case {
     TUPLE_CLASS_BOILERPLATE(Case);
     std::tuple<Statement<CaseStmt>, Block> t;
   };
   TUPLE_CLASS_BOILERPLATE(CaseConstruct);
-  std::tuple<Statement<SelectCaseStmt>, std::list<Case>,
-      Statement<EndSelectStmt>>
+  std::tuple<std::optional<Name>, Statement<SelectCaseStmt>,
+      std::list<Case>, Statement<EndSelectStmt>>
       t;
 };
 

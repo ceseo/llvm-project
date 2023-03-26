@@ -2063,7 +2063,7 @@ private:
     Fortran::lower::StatementContext &stmtCtx =
         activeConstructStack.back().stmtCtx;
     const Fortran::lower::SomeExpr *expr = Fortran::semantics::GetExpr(
-        std::get<Fortran::parser::Scalar<Fortran::parser::Expr>>(stmt.t));
+        std::get<Fortran::parser::Expr>>(stmt.t));
     bool isCharSelector = isCharacterCategory(expr->GetType()->category());
     bool isLogicalSelector = isLogicalCategory(expr->GetType()->category());
     mlir::MLIRContext *context = builder->getContext();
