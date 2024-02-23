@@ -280,6 +280,7 @@ struct DummyArgument {
       const Expr<SomeType> &, FoldingContext &, bool forImplicitInterface);
   static std::optional<DummyArgument> FromActual(std::string &&,
       const ActualArgument &, FoldingContext &, bool forImplicitInterface);
+  bool IsEmpty() const;
   bool IsOptional() const;
   void SetOptional(bool = true);
   common::Intent GetIntent() const;

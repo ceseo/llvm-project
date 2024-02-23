@@ -900,6 +900,23 @@ std::optional<DummyArgument> DummyArgument::FromActual(std::string &&name,
   }
 }
 
+bool DummyArgument::IsEmpty() const {
+  return common::visit(
+      common::visitors{
+          [](const DummyDataObject &data) {
+            if (data.type.type().knownLength()) {
+              return false;
+            }
+            else {
+              return true;
+            }
+          },
+          [](const DummyProcedure &proc) { return false; },
+          [](const AlternateReturn &) { return false; },
+      },
+      u);
+}
+
 bool DummyArgument::IsOptional() const {
   return common::visit(
       common::visitors{

@@ -4224,7 +4224,15 @@ private:
         mapBlockArgToDummyOrResult(arg.entity->get(), box);
       } else {
         if (arg.entity.has_value()) {
-          mapBlockArgToDummyOrResult(arg.entity->get(), arg.firArgument);
+          // In most cases, checking if arg.entity has a value is sufficient.
+          // However, if the argument is optional, is not passed and that
+          // optional variable is defined inside the function, arg.entity will
+          // have a value, but the dummy object will have no length. We have to
+          // check the *arg.characteristics pointer for a length greater than
+          // zero and map the argument only if that is true.
+          if (!arg.isOptional() || (arg.isOptional() && !arg.characteristics->IsEmpty())) {
+            mapBlockArgToDummyOrResult(arg.entity->get(), arg.firArgument);
+          }
         } else {
           assert(funit.parentHasTupleHostAssoc() && "expect tuple argument");
         }
