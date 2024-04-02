@@ -1026,6 +1026,10 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::DEBUGTRAP, MVT::Other, Legal);
   setOperationAction(ISD::UBSANTRAP, MVT::Other, Legal);
 
+  // INIT_TRAMPOLINE and ADJUST_TRAMPOLINE are custom lowered.
+  setOperationAction(ISD::INIT_TRAMPOLINE, MVT::Other, Custom);
+  setOperationAction(ISD::ADJUST_TRAMPOLINE, MVT::Other, Custom);
+
   // We combine OR nodes for bitfield operations.
   setTargetDAGCombine(ISD::OR);
   // Try to create BICs for vector ANDs.
@@ -6390,6 +6394,10 @@ SDValue AArch64TargetLowering::LowerOperation(SDValue Op,
     return LowerGlobalAddress(Op, DAG);
   case ISD::GlobalTLSAddress:
     return LowerGlobalTLSAddress(Op, DAG);
+  case ISD::INIT_TRAMPOLINE:
+    return LowerINIT_TRAMPOLINE(Op, DAG);
+  case ISD::ADJUST_TRAMPOLINE:
+    return LowerADJUST_TRAMPOLINE(Op, DAG);
   case ISD::SETCC:
   case ISD::STRICT_FSETCC:
   case ISD::STRICT_FSETCCS:
@@ -9188,6 +9196,62 @@ SDValue AArch64TargetLowering::LowerGlobalTLSAddress(SDValue Op,
     return LowerWindowsGlobalTLSAddress(Op, DAG);
 
   llvm_unreachable("Unexpected platform trying to use TLS");
+}
+
+SDValue AArch64TargetLowering::LowerADJUST_TRAMPOLINE(SDValue Op,
+                                                      SelectionDAG &DAG) const {
+  // Note: x18 cannot be used for the Nest parameter on Windows and macOS.
+  if (Subtarget->isTargetDarwin() || Subtarget->isTargetWindows())
+    report_fatal_error(
+        "ADJUST_TRAMPOLINE operation is only supported on Linux.");
+
+  return Op.getOperand(0);
+}
+
+SDValue AArch64TargetLowering::LowerINIT_TRAMPOLINE(SDValue Op,
+                                                SelectionDAG &DAG) const {
+
+  // Note: x18 cannot be used for the Nest parameter on Windows and macOS.
+  if (Subtarget->isTargetDarwin() || Subtarget->isTargetWindows())
+    report_fatal_error("INIT_TRAMPOLINE operation is only supported on Linux.");
+
+  SDValue Root = Op.getOperand(0);
+  SDValue Trmp = Op.getOperand(1); // trampoline
+  SDValue FPtr = Op.getOperand(2); // nested function
+  SDValue Nest = Op.getOperand(3); // 'nest' parameter value
+  SDLoc dl (Op);
+
+  const Value *TrmpAddr = cast<SrcValueSDNode>(Op.getOperand(4))->getValue();
+  SDValue Addr = Trmp;
+  SDValue OutChains[3];
+
+  // Get the nested function address
+  GlobalAddressSDNode *GN = cast<GlobalAddressSDNode>(FPtr);
+  EVT Ty = getPointerTy(DAG.getDataLayout());
+  SDValue Hi = getTargetNode(GN, Ty, DAG, AArch64II::MO_PAGE);
+  SDValue Lo = getTargetNode(GN, Ty, DAG, AArch64II::MO_PAGEOFF | AArch64II::MO_NC);
+  SDValue ADRP = DAG.getNode(AArch64ISD::ADRP, dl, Ty, Hi);
+  SDValue FPtrAddr = DAG.getNode(AArch64ISD::ADDlow, dl, Ty, ADRP, Lo);
+  SDValue LoadFPtr = DAG.getCopyToReg(Root, dl, AArch64::X17, FPtrAddr, SDValue());
+  OutChains[0] = DAG.getStore(Root, dl, LoadFPtr, Addr, MachinePointerInfo(TrmpAddr));
+  Addr = DAG.getNode(ISD::ADD, dl, MVT::i64, Trmp, DAG.getConstant(4, dl, MVT::i64));
+
+  // Get the nest parameter
+  GN = cast<GlobalAddressSDNode>(Nest);
+  Hi = getTargetNode(GN, Ty, DAG, AArch64II::MO_PAGE);
+  Lo = getTargetNode(GN, Ty, DAG, AArch64II::MO_PAGEOFF | AArch64II::MO_NC);
+  ADRP = DAG.getNode(AArch64ISD::ADRP, dl, Ty, Hi);
+  SDValue NestAddr = DAG.getNode(AArch64ISD::ADDlow, dl, Ty, ADRP, Lo);
+  SDValue LoadNest = DAG.getCopyToReg(Root, dl, AArch64::X18, NestAddr, SDValue());
+  OutChains[1] = DAG.getStore(Root, dl, LoadNest, Addr, MachinePointerInfo(TrmpAddr, 4));
+  Addr = DAG.getNode(ISD::ADD, dl, MVT::i64, Trmp, DAG.getConstant(8, dl, MVT::i64));
+
+  // Branch to the nested function
+  SDValue Branch = DAG.getNode(AArch64ISD::TC_RETURN, dl, DAG.getVTList(MVT::Other, MVT::Glue),
+                  LoadFPtr, FPtrAddr, DAG.getRegister(AArch64::X17, MVT::i64));
+  OutChains[2] = DAG.getStore(Root, dl, Branch, Addr, MachinePointerInfo(TrmpAddr, 8));
+
+  return DAG.getNode(ISD::TokenFactor, dl, MVT::Other, OutChains);
 }
 
 // Looks through \param Val to determine the bit that can be used to
