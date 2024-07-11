@@ -372,6 +372,52 @@ public:
   bool Pre(const parser::OpenMPCriticalConstruct &critical);
   void Post(const parser::OpenMPCriticalConstruct &) { PopContext(); }
 
+  bool Pre(const parser::OpenMPDeclareReductionConstruct &x) {
+    PushContext(x.source, llvm::omp::Directive::OMPD_declare_reduction);
+    Symbol::Flag ompFlag = Symbol::Flag::OmpDeclareReduction;
+    const parser::OmpReductionOperator &opr{
+        std::get<parser::OmpReductionOperator>(x.t)};
+    const auto createDummyOpSymbol = [&](const parser::Name *name) {
+      // If name resolution failed, create a dummy symbol
+      const auto namePair{
+          currScope().try_emplace(name->source, Attrs{}, ProcEntityDetails{})};
+      auto &newSymbol{*namePair.first->second};
+      if (context_.intrinsics().IsIntrinsic(name->ToString())) {
+        newSymbol.attrs().set(Attr::INTRINSIC);
+      }
+      name->symbol = &newSymbol;
+    };
+    if (const auto *procD{parser::Unwrap<parser::ProcedureDesignator>(opr.u)}) {
+      if (const auto *name{parser::Unwrap<parser::Name>(procD->u)}) {
+        if (!name->symbol) {
+          if (!ResolveName(name)) {
+            createDummyOpSymbol(name);
+          } else {
+            auto *resolvedSymbol{ResolveOmp(*name, ompFlag, currScope())};
+            if (dataSharingAttributeFlags.test(ompFlag)) {
+              AddToContextObjectWithDSA(*resolvedSymbol, ompFlag);
+            }
+          }
+        }
+      }
+      if (const auto *procRef{
+              parser::Unwrap<parser::ProcComponentRef>(procD->u)}) {
+        if (!procRef->v.thing.component.symbol) {
+          if (!ResolveName(&procRef->v.thing.component)) {
+            createDummyOpSymbol(&procRef->v.thing.component);
+          } else {
+            auto *resolvedSymbol{ResolveOmp(procRef->v.thing.component, ompFlag, currScope())};
+            if (dataSharingAttributeFlags.test(ompFlag)) {
+              AddToContextObjectWithDSA(*resolvedSymbol, ompFlag);
+            }
+          }
+        }
+      }
+    }
+    return true;
+  }
+  void Post(const parser::OpenMPDeclareReductionConstruct &) { PopContext(); }
+
   bool Pre(const parser::OpenMPDeclareSimdConstruct &x) {
     PushContext(x.source, llvm::omp::Directive::OMPD_declare_simd);
     const auto &name{std::get<std::optional<parser::Name>>(x.t)};

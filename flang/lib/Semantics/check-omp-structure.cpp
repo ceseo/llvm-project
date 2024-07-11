@@ -1122,6 +1122,15 @@ void OmpStructureChecker::Leave(const parser::OpenMPThreadprivate &c) {
   dirContext_.pop_back();
 }
 
+void OmpStructureChecker::Enter(const parser::OpenMPDeclareReductionConstruct &x) {
+  const auto &dir{std::get<parser::Verbatim>(x.t)};
+  PushContextAndClauseSets(dir.source, llvm::omp::Directive::OMPD_declare_reduction);
+}
+
+void OmpStructureChecker::Leave(const parser::OpenMPDeclareReductionConstruct &) {
+  dirContext_.pop_back();
+}
+
 void OmpStructureChecker::Enter(const parser::OpenMPDeclareSimdConstruct &x) {
   const auto &dir{std::get<parser::Verbatim>(x.t)};
   PushContextAndClauseSets(dir.source, llvm::omp::Directive::OMPD_declare_simd);

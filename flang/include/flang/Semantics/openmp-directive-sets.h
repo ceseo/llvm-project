@@ -267,6 +267,7 @@ static const OmpDirectiveSet nonPartialVarSet{
     Directive::OMPD_allocate,
     Directive::OMPD_allocators,
     Directive::OMPD_threadprivate,
+    Directive::OMPD_declare_reduction,
     Directive::OMPD_declare_target,
 };
 
