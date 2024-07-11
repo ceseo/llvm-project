@@ -2548,9 +2548,18 @@ public:
               EndOpenMP();
               return false;
             },
-            [&](const OpenMPDeclareReductionConstruct &) {
-              Word("DECLARE REDUCTION ");
-              return true;
+            [&](const OpenMPDeclareReductionConstruct &y) {
+              Word("DECLARE REDUCTION (");
+              Walk(std::get<OmpReductionOperator>(y.t));
+              Put(" : ");
+              Walk(std::get<std::list<DeclarationTypeSpec>>(y.t), ",");
+              Put(" : ");
+              Walk(std::get<OmpReductionCombiner>(y.t));
+              Put(")");
+              Walk(std::get<std::optional<OmpReductionInitializerClause>>(y.t));
+              Put("\n");
+              EndOpenMP();
+              return false;
             },
             [&](const OpenMPDeclareSimdConstruct &y) {
               Word("DECLARE SIMD ");

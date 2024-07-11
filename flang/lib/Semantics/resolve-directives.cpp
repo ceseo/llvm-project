@@ -369,6 +369,12 @@ public:
   bool Pre(const parser::OpenMPCriticalConstruct &critical);
   void Post(const parser::OpenMPCriticalConstruct &) { PopContext(); }
 
+  bool Pre(const parser::OpenMPDeclareReductionConstruct &x) {
+    PushContext(x.source, llvm::omp::Directive::OMPD_declare_reduction);
+    return true;
+  }
+  void Post(const parser::OpenMPDeclareReductionConstruct &) { PopContext(); }
+
   bool Pre(const parser::OpenMPDeclareSimdConstruct &x) {
     PushContext(x.source, llvm::omp::Directive::OMPD_declare_simd);
     const auto &name{std::get<std::optional<parser::Name>>(x.t)};
