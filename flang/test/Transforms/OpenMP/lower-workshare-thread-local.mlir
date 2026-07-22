@@ -317,11 +317,14 @@ func.func @thread_local_load_and_store() {
 }
 
 // The store to thread-local memory is parallelized (outside the single),
-// but the load remains inside the single to maintain synchronization.
+// but the load remains inside the single to maintain synchronization. The
+// store which depends on that load can only run on the thread executing the
+// single, so the thread-local memory it updates is broadcast with copyprivate
+// to keep the copies of the other threads in sync.
 
 // CHECK:       omp.parallel {
 // CHECK-NEXT:    %[[ALLOCA:.*]] = fir.alloca i32
-// CHECK:         omp.single nowait {
+// CHECK:         omp.single copyprivate(%[[ALLOCA]] -> @_workshare_copy_i32 : !fir.ref<i32>) {
 // CHECK:           fir.store {{.*}} to %[[ALLOCA]] : !fir.ref<i32>
 // CHECK:           fir.load %[[ALLOCA]] : !fir.ref<i32>
 // CHECK:           fir.store {{.*}} to %[[ALLOCA]] : !fir.ref<i32>
@@ -403,3 +406,65 @@ func.func @forall_pattern_in_workshare(%shared: !fir.ref<i32>) {
 // CHECK:         }
 // CHECK:         omp.barrier
 // CHECK:       }
+
+// Check the FORALL fetch-counter pattern: a thread-local counter which is
+// read, incremented and written back from inside an omp.single.
+//
+//   !$omp workshare
+//   forall (i=1:1)
+//     forall (j=1:3)
+//       a(:,i,j) = a(:,i,j) + 1
+//     end forall
+//   end forall
+//   !$omp end workshare
+//
+// The increment can only be computed on the thread executing the omp.single,
+// so the counter must be broadcast with copyprivate. Otherwise the threads
+// which did not execute the omp.single keep a stale counter and fetch the
+// wrong element on the following iterations. See issue #209942.
+
+// CHECK-LABEL: func.func @forall_fetch_counter_in_workshare
+func.func @forall_fetch_counter_in_workshare(%stack: !fir.ref<i32>) {
+  omp.parallel {
+    %counter = fir.alloca i64 {pinned}
+    omp.workshare {
+      %c0_i64 = arith.constant 0 : i64
+      %c1_i64 = arith.constant 1 : i64
+      %c1 = arith.constant 1 : index
+      %c3 = arith.constant 3 : index
+      fir.store %c0_i64 to %counter : !fir.ref<i64>
+      fir.do_loop %iv = %c1 to %c3 step %c1 {
+        %idx = fir.load %counter : !fir.ref<i64>
+        %next = arith.addi %idx, %c1_i64 : i64
+        fir.store %next to %counter : !fir.ref<i64>
+        "test.fetch"(%stack, %idx) : (!fir.ref<i32>, i64) -> ()
+        omp.workshare.loop_wrapper {
+          omp.loop_nest (%j) : index = (%c1) to (%c3) inclusive step (%c1) {
+            "test.inner"(%j) : (index) -> ()
+            omp.yield
+          }
+        }
+      }
+      omp.terminator
+    }
+    omp.terminator
+  }
+  return
+}
+
+// CHECK:       omp.parallel {
+// CHECK:         %[[COUNTER:.*]] = fir.alloca i64 {pinned}
+// The reset of the counter is a write to thread-local memory whose operands
+// are all available, so it is parallelized and all threads run it.
+// CHECK:         fir.store %{{.*}} to %[[COUNTER]] : !fir.ref<i64>
+// CHECK:         fir.do_loop
+// CHECK:           omp.single copyprivate(%[[COUNTER]] -> @_workshare_copy_i64 : !fir.ref<i64>) {
+// CHECK:             %[[IDX:.*]] = fir.load %[[COUNTER]] : !fir.ref<i64>
+// CHECK:             %[[NEXT:.*]] = arith.addi %[[IDX]], %{{.*}} : i64
+// CHECK:             fir.store %[[NEXT]] to %[[COUNTER]] : !fir.ref<i64>
+// CHECK:             "test.fetch"
+// CHECK:             omp.terminator
+// CHECK-NEXT:      }
+// The increment must not be repeated outside the single.
+// CHECK-NOT:       fir.store {{.*}} to %[[COUNTER]]
+// CHECK:           omp.wsloop {
