@@ -531,3 +531,58 @@ func.func @written_then_read_thread_local_is_broadcast(%shared: !fir.ref<i32>, %
 // CHECK:           omp.terminator
 // CHECK-NEXT:    }
 // CHECK:         fir.load %[[TL]] : !fir.ref<i32>
+
+
+// -----
+
+// Check that the read which keeps a thread-local write live for broadcasting
+// is still recognized when it goes through a fir.declare of the allocation
+// (looking through declares/converts, as flang lowering routinely inserts
+// them). Matching the raw load/store value instead would miss this read and
+// drop the required broadcast.
+
+// CHECK-LABEL: func.func @broadcast_when_read_through_declare
+func.func @broadcast_when_read_through_declare(%shared: !fir.ref<i32>, %sink: !fir.ref<i32>) {
+  omp.parallel {
+    %tl = fir.alloca i32
+    %d = fir.declare %tl {uniq_name = "tl"} : (!fir.ref<i32>) -> !fir.ref<i32>
+    omp.workshare {
+      %v = fir.load %shared : !fir.ref<i32>
+      fir.store %v to %tl : !fir.ref<i32>
+      omp.terminator
+    }
+    %r = fir.load %d : !fir.ref<i32>
+    fir.store %r to %sink : !fir.ref<i32>
+    omp.terminator
+  }
+  return
+}
+
+// CHECK:       %[[TL:.*]] = fir.alloca i32
+// The broadcast copies the underlying allocation, not the fir.declare.
+// CHECK:       omp.single copyprivate(%[[TL]] -> @_workshare_copy_i32 : !fir.ref<i32>) {
+
+// -----
+
+// Same, but now the write from within the omp.single goes through a
+// fir.declare of the allocation while the read is direct.
+
+// CHECK-LABEL: func.func @broadcast_when_written_through_declare
+func.func @broadcast_when_written_through_declare(%shared: !fir.ref<i32>, %sink: !fir.ref<i32>) {
+  omp.parallel {
+    %tl = fir.alloca i32
+    %d = fir.declare %tl {uniq_name = "tl"} : (!fir.ref<i32>) -> !fir.ref<i32>
+    omp.workshare {
+      %v = fir.load %shared : !fir.ref<i32>
+      fir.store %v to %d : !fir.ref<i32>
+      omp.terminator
+    }
+    %r = fir.load %tl : !fir.ref<i32>
+    fir.store %r to %sink : !fir.ref<i32>
+    omp.terminator
+  }
+  return
+}
+
+// CHECK:       %[[TL:.*]] = fir.alloca i32
+// CHECK:       omp.single copyprivate(%[[TL]] -> @_workshare_copy_i32 : !fir.ref<i32>) {

@@ -259,6 +259,23 @@ static bool isSafeToParallelize(Operation *op) {
   return false;
 }
 
+// Returns the underlying thread-local storage that mem refers to, or null if
+// mem is not thread-local. The alias analysis is used to look through
+// fir.declare/hlfir.declare, fir.convert, fir.rebox, etc., so that two
+// accesses of the same thread-local location yield the same value even if one
+// goes through such ops and the other does not. This is what makes it safe to
+// match the reads and writes of collect{Reads,Writes} against each other by
+// value identity: a store to an alloca and a load from a fir.declare of that
+// alloca map to the same key. Matching the raw effect value instead would
+// silently miss such accesses, dropping a required broadcast.
+static Value getOpenMPThreadLocalSource(Operation *op, Value mem) {
+  if (!isOpenMPThreadLocalMemory(op, mem))
+    return nullptr;
+  fir::AliasAnalysis aliasAnalysis;
+  return llvm::dyn_cast_if_present<mlir::Value>(
+      aliasAnalysis.getSource(mem).origin.u);
+}
+
 // Collects the thread-local memory locations that op writes to and that
 // need to be broadcasted to other threads when op ends up being executed
 // by a single thread only.
@@ -272,7 +289,7 @@ static bool isSafeToParallelize(Operation *op) {
 // which did not execute the omp.single would otherwise go stale and the
 // following iterations would fetch the wrong element. See issue #209942.
 //
-// Only the thread-local allocation itself is considered, so that a shallow
+// Only the underlying thread-local allocation is considered, so that a shallow
 // copy of it faithfully reproduces the update on the other threads.
 static void collectThreadLocalWrites(Operation *op,
                                      llvm::SmallVectorImpl<Value> &vars) {
@@ -285,9 +302,12 @@ static void collectThreadLocalWrites(Operation *op,
     if (!isa<MemoryEffects::Write>(effect.getEffect()))
       continue;
     Value val = effect.getValue();
-    if (!val || !val.getDefiningOp<fir::AllocaOp>())
+    if (!val)
       continue;
-    auto refTy = dyn_cast<fir::ReferenceType>(val.getType());
+    Value source = getOpenMPThreadLocalSource(op, val);
+    if (!source)
+      continue;
+    auto refTy = dyn_cast<fir::ReferenceType>(source.getType());
     if (!refTy)
       continue;
     // createCopyFunc emits a load/store pair, so restrict this to types for
@@ -295,9 +315,7 @@ static void collectThreadLocalWrites(Operation *op,
     mlir::Type eleTy = refTy.getEleTy();
     if (!fir::isa_trivial(eleTy) && !fir::isa_box_type(eleTy))
       continue;
-    if (!isOpenMPThreadLocalMemory(op, val))
-      continue;
-    vars.push_back(val);
+    vars.push_back(source);
   }
 }
 
@@ -307,9 +325,9 @@ static void collectThreadLocalWrites(Operation *op,
 // a region executed by the whole team (i.e. the enclosing omp.parallel), so
 // that reads performed after the omp.workshare region are accounted for too.
 //
-// Reads are matched by the identity of the alloca, mirroring
-// collectThreadLocalWrites, so that only a direct load/store of the whole
-// thread-local location keeps it live for broadcasting.
+// Reads are matched by their underlying thread-local allocation, mirroring
+// collectThreadLocalWrites, so that a load through a fir.declare/fir.convert
+// still keeps the corresponding write live for broadcasting.
 static void collectThreadLocalReads(Region &scope,
                                     llvm::SmallDenseSet<Value> &reads) {
   scope.walk([&](Operation *op) {
@@ -322,10 +340,10 @@ static void collectThreadLocalReads(Region &scope,
       if (!isa<MemoryEffects::Read>(effect.getEffect()))
         continue;
       Value val = effect.getValue();
-      if (!val || !val.getDefiningOp<fir::AllocaOp>())
+      if (!val)
         continue;
-      if (isOpenMPThreadLocalMemory(op, val))
-        reads.insert(val);
+      if (Value source = getOpenMPThreadLocalSource(op, val))
+        reads.insert(source);
     }
   });
 }
