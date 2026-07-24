@@ -301,6 +301,35 @@ static void collectThreadLocalWrites(Operation *op,
   }
 }
 
+// Collects into reads the thread-local allocations that are read anywhere in
+// scope. A thread-local location written from within an omp.single only needs
+// to be broadcasted if some other thread may later read it. The scope must be
+// a region executed by the whole team (i.e. the enclosing omp.parallel), so
+// that reads performed after the omp.workshare region are accounted for too.
+//
+// Reads are matched by the identity of the alloca, mirroring
+// collectThreadLocalWrites, so that only a direct load/store of the whole
+// thread-local location keeps it live for broadcasting.
+static void collectThreadLocalReads(Region &scope,
+                                    llvm::SmallDenseSet<Value> &reads) {
+  scope.walk([&](Operation *op) {
+    auto memEffects = dyn_cast<MemoryEffectOpInterface>(op);
+    if (!memEffects)
+      return;
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memEffects.getEffects(effects);
+    for (const MemoryEffects::EffectInstance &effect : effects) {
+      if (!isa<MemoryEffects::Read>(effect.getEffect()))
+        continue;
+      Value val = effect.getValue();
+      if (!val || !val.getDefiningOp<fir::AllocaOp>())
+        continue;
+      if (isOpenMPThreadLocalMemory(op, val))
+        reads.insert(val);
+    }
+  });
+}
+
 /// Simple shallow copies suffice for our purposes in this pass, so we implement
 /// this simpler alternative to the full fledged `createCopyFunc` in the
 /// frontend
@@ -385,9 +414,11 @@ static void cleanupBlock(Block *block) {
 // very last thing the omp.workshare region does, and thus whether the
 // synchronization of its last omp.single/omp.wsloop may be left to the
 // barrier emitted at the end of the omp.workshare region.
-static void parallelizeRegion(Region &sourceRegion, Region &targetRegion,
-                              IRMapping &rootMapping, Location loc,
-                              mlir::DominanceInfo &di, bool canUseNowait) {
+static void
+parallelizeRegion(Region &sourceRegion, Region &targetRegion,
+                  IRMapping &rootMapping, Location loc, mlir::DominanceInfo &di,
+                  bool canUseNowait,
+                  const llvm::SmallDenseSet<Value> &threadLocalReads) {
   OpBuilder rootBuilder(sourceRegion.getContext());
   ModuleOp m = sourceRegion.getParentOfType<ModuleOp>();
   OpBuilder copyFuncBuilder(m.getBodyRegion());
@@ -468,10 +499,15 @@ static void parallelizeRegion(Region &sourceRegion, Region &targetRegion,
     omp::TerminatorOp::create(singleBuilder, loc);
 
     // Broadcast the thread-local state which only the thread executing the
-    // omp.single has updated. Values defined inside sr are remapped; values
-    // defined before it (e.g. hoisted allocas) are used as is.
+    // omp.single has updated, but only when some other thread may actually read
+    // it back: a location that is never read (e.g. a write to a temporary in a
+    // terminal omp.single) does not need to be broadcasted. Values defined
+    // inside sr are remapped; values defined before it (e.g. hoisted allocas)
+    // are used as is.
     llvm::SmallDenseSet<Value> seen(copyPrivate.begin(), copyPrivate.end());
     for (Value v : threadLocalWrites) {
+      if (!threadLocalReads.contains(v))
+        continue;
       Value mapped = singleMapping.lookupOrDefault(v);
       if (seen.insert(mapped).second)
         copyPrivate.push_back(mapped);
@@ -590,7 +626,7 @@ static void parallelizeRegion(Region &sourceRegion, Region &targetRegion,
           for (auto [region, clonedRegion] :
                llvm::zip(op->getRegions(), cloned->getRegions()))
             parallelizeRegion(region, clonedRegion, rootMapping, loc, di,
-                              nestedCanUseNowait);
+                              nestedCanUseNowait, threadLocalReads);
         }
       }
     }
@@ -665,8 +701,21 @@ LogicalResult lowerWorkshare(mlir::omp::WorkshareOp wsOp, DominanceInfo &di) {
     if (!wsOp.getNowait())
       omp::BarrierOp::create(rootBuilder, loc);
 
+    // Compute the thread-local locations read by the whole team, so that only
+    // those get broadcasted out of the omp.single's below. The enclosing
+    // omp.parallel is used as the scope so that reads performed after the
+    // omp.workshare region are taken into account as well; if there is none,
+    // fall back to the innermost isolated-from-above ancestor.
+    llvm::SmallDenseSet<Value> threadLocalReads;
+    if (auto parallelOp = wsOp->getParentOfType<omp::ParallelOp>())
+      collectThreadLocalReads(parallelOp.getRegion(), threadLocalReads);
+    else if (Operation *top =
+                 wsOp->getParentWithTrait<OpTrait::IsIsolatedFromAbove>())
+      for (Region &r : top->getRegions())
+        collectThreadLocalReads(r, threadLocalReads);
+
     parallelizeRegion(wsOp.getRegion(), newOp.getRegion(), rootMapping, loc, di,
-                      /*canUseNowait=*/true);
+                      /*canUseNowait=*/true, threadLocalReads);
 
     // Inline the contents of the placeholder workshare op into its parent
     // block.

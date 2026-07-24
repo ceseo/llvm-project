@@ -468,3 +468,66 @@ func.func @forall_fetch_counter_in_workshare(%stack: !fir.ref<i32>) {
 // The increment must not be repeated outside the single.
 // CHECK-NOT:       fir.store {{.*}} to %[[COUNTER]]
 // CHECK:           omp.wsloop {
+
+
+// -----
+
+// Check that a thread-local location written from within an omp.single but
+// never read back by the team is NOT broadcasted with copyprivate. The store
+// is not safe to parallelize on its own here because its value comes from a
+// shared load that must stay in the omp.single, so it ends up executed by a
+// single thread.
+
+// CHECK-LABEL: func.func @write_only_thread_local_not_broadcast
+func.func @write_only_thread_local_not_broadcast(%shared: !fir.ref<i32>) {
+  omp.parallel {
+    %tl = fir.alloca i32
+    omp.workshare {
+      %v = fir.load %shared : !fir.ref<i32>
+      fir.store %v to %tl : !fir.ref<i32>
+      omp.terminator
+    }
+    omp.terminator
+  }
+  return
+}
+
+// CHECK:       omp.parallel {
+// CHECK-NEXT:    %[[TL:.*]] = fir.alloca i32
+// The single carries no copyprivate: %[[TL]] is never read by the team.
+// CHECK:         omp.single nowait {
+// CHECK-NOT:       copyprivate
+// CHECK:           fir.store %{{.*}} to %[[TL]] : !fir.ref<i32>
+// CHECK:           omp.terminator
+// CHECK-NEXT:    }
+// CHECK-NEXT:    omp.barrier
+
+// -----
+
+// Same write from within an omp.single, but now the location is read back by
+// the whole team after the omp.workshare region: it must be broadcasted so the
+// threads which did not run the single do not observe a stale value.
+
+// CHECK-LABEL: func.func @written_then_read_thread_local_is_broadcast
+func.func @written_then_read_thread_local_is_broadcast(%shared: !fir.ref<i32>, %sink: !fir.ref<i32>) {
+  omp.parallel {
+    %tl = fir.alloca i32
+    omp.workshare {
+      %v = fir.load %shared : !fir.ref<i32>
+      fir.store %v to %tl : !fir.ref<i32>
+      omp.terminator
+    }
+    %r = fir.load %tl : !fir.ref<i32>
+    fir.store %r to %sink : !fir.ref<i32>
+    omp.terminator
+  }
+  return
+}
+
+// CHECK:       omp.parallel {
+// CHECK-NEXT:    %[[TL:.*]] = fir.alloca i32
+// CHECK:         omp.single copyprivate(%[[TL]] -> @_workshare_copy_i32 : !fir.ref<i32>) {
+// CHECK:           fir.store %{{.*}} to %[[TL]] : !fir.ref<i32>
+// CHECK:           omp.terminator
+// CHECK-NEXT:    }
+// CHECK:         fir.load %[[TL]] : !fir.ref<i32>
